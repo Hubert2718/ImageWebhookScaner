@@ -14,9 +14,9 @@ import (
 
 func main() {
 	// Set up HTTP server
-	http.HandleFunc("/scan", handleScanRequest)
+	http.HandleFunc("/", handleScanRequest)
 	fmt.Println("Server started at :8080")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	log.Fatal(http.ListenAndServeTLS(":8080", "/etc/webhook/certs/cert.pem", "/etc/webhook/certs/key.pem", nil))
 }
 
 func handleScanRequest(w http.ResponseWriter, r *http.Request) {
