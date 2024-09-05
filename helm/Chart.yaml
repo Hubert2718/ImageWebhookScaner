@@ -1,0 +1,5 @@
+apiVersion: v2
+name: image-policy-webhook
+description: A Helm chart for Kubernetes Image Policy Webhook
+version: 0.1.0
+appVersion: "1.0"

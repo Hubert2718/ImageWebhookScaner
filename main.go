@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os/exec"
+	"time"
 
 	"ImageWebhookScaner/jsonutils"
 	"ImageWebhookScaner/models"
@@ -93,15 +94,23 @@ func runTrivyScan(image string) (models.ScanResult, error) {
 		for _, vuln := range result.Vulnerabilities {
 			if vuln.Severity == "CRITICAL" {
 				scanResults.Vulnerabilities = append(scanResults.Vulnerabilities, vuln)
+				// Print detailed vulnerability information
+				fmt.Printf("[%s] Critical Vulnerability Found: \n", time.Now().Format(time.RFC3339))
+				fmt.Printf("  - Vulnerability ID: %s\n", vuln.VulnerabilityID)
+				fmt.Printf("  - Package Name: %s\n", vuln.PkgName)
+				fmt.Printf("  - Installed Version: %s\n", vuln.InstalledVersion)
+				fmt.Printf("  - Severity: %s\n", vuln.Severity)
+				fmt.Printf("  - Description: %s\n", vuln.Description)
 			}
 		}
 	}
 
 	// Only return results if there are critical vulnerabilities
 	if len(scanResults.Vulnerabilities) > 0 {
+		fmt.Printf("[%s] Critical vulnerabilities found for image: %s\n", time.Now().Format(time.RFC3339), image)
 		return scanResults, nil
 	}
 
-	fmt.Println("No critical vulnerabilities found for image:", image)
+	fmt.Printf("[%s] No critical vulnerabilities found for image: %s\n", time.Now().Format(time.RFC3339), image)
 	return models.ScanResult{}, nil
 }
