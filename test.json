@@ -1,0 +1,15 @@
+{
+    "apiVersion": "imagepolicy.k8s.io/v1alpha1",
+    "kind": "ImageReview",
+    "spec": {
+      "containers": [
+        {
+          "image": "alpine:3.20.2"
+        }
+      ],
+      "annotations": {
+        "mycluster.image-policy.k8s.io/ticket-1234": "break-glass"
+      },
+      "namespace": "mynamespace"
+    }
+  }
