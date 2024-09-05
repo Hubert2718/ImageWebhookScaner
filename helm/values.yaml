@@ -1,0 +1,14 @@
+replicas: 2
+
+image:
+  repository: hubertbuczynski/image-webhook-scaner
+  tag: latest
+  pullPolicy: Always
+
+service:
+  type: ClusterIP
+  port: 443
+  targetPort: 8080
+  clusterIP: 10.100.169.178
+
+resources: {}

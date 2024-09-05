@@ -3,80 +3,48 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
-	"os"
+	"net/http"
 	"os/exec"
-	"strings"
+	"time"
+
+	"ImageWebhookScaner/jsonutils"
+	"ImageWebhookScaner/models"
 )
 
-type ImageReview struct {
-	APIVersion string `json:"apiVersion"`
-	Kind       string `json:"kind"`
-	Spec       Spec   `json:"spec"`
-}
-
-type Spec struct {
-	Containers  []Container       `json:"containers"`
-	Annotations map[string]string `json:"annotations"`
-	Namespace   string            `json:"namespace"`
-}
-
-type Container struct {
-	Image string `json:"image"`
-}
-
-// Trivy output structure to parse JSON results
-type TrivyOutput struct {
-	SchemaVersion int      `json:"SchemaVersion"`
-	ArtifactName  string   `json:"ArtifactName"`
-	Results       []Result `json:"Results"`
-}
-
-type Result struct {
-	Target          string          `json:"Target"`
-	Class           string          `json:"Class"`
-	Type            string          `json:"Type"`
-	Vulnerabilities []Vulnerability `json:"Vulnerabilities"`
-}
-
-type Vulnerability struct {
-	VulnerabilityID  string `json:"VulnerabilityID"`
-	PkgName          string `json:"PkgName"`
-	InstalledVersion string `json:"InstalledVersion"`
-	Severity         string `json:"Severity"`
-	Description      string `json:"Description"`
-}
-
-type ScanResult struct {
-	Target          string          `json:"Target"`
-	Vulnerabilities []Vulnerability `json:"Vulnerabilities"`
-}
-
-// Struct to store aggregated scan summaries for all images
-type TrivyScanSummary struct {
-	Images map[string][]ScanResult `json:"images"`
-}
-
 func main() {
-	//Check if a file name is provisioned as command-line argument
-	if len(os.Args) < 2 {
-		log.Fatalf("Usage: %s <input_file.json>", os.Args[0])
+	// Set up HTTP server
+	http.HandleFunc("/", handleScanRequest)
+	fmt.Println("Server started at :8080")
+	log.Fatal(http.ListenAndServeTLS(":8080", "/etc/webhook/certs/cert.pem", "/etc/webhook/certs/key.pem", nil))
+}
+
+func handleScanRequest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
+		return
 	}
 
-	// read the JSON file specified as the first argument
-	fileName := os.Args[1]
-
-	// this holds an addres (pointer -> *) of unmarshalled json ImageReview struct
-	outputJSON, err := readJSONFile(fileName)
+	// Read JSON data from the request body
+	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		log.Fatalf("Failed to read and unmarshal JSON file: %s", err)
+		http.Error(w, "Error reading request body", http.StatusBadRequest)
+		return
 	}
+	// ensures that r.Body.Close() is called when the function handleScanRequest finishes execution, regardless of whether it exits normally or because of an error.
+	defer r.Body.Close()
 
-	fmt.Printf("Unmarshalled JSON Struct: %+v\n", *outputJSON)
+	var outputJSON models.ImageReview
+	err = json.Unmarshal(body, &outputJSON)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to unmarshal JSON: %s", err), http.StatusBadRequest)
+		return
+	}
 
 	// Initialize the scan summary for images with critical vulnerabilities
-	trivySummary := &TrivyScanSummary{
-		Images: make(map[string][]ScanResult),
+	trivySummary := &models.TrivyScanSummary{
+		Images: make(map[string][]models.ScanResult),
 	}
 
 	// Iterate over the images in the JSON and run trivy against each
@@ -94,103 +62,55 @@ func main() {
 		}
 	}
 
-	responseJSON := generateJSONResponce(trivySummary)
-	fmt.Print(string(responseJSON))
+	responseJSON := jsonutils.GenerateJSONResponce(trivySummary)
+
+	// Write JSON response
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(responseJSON)
 }
 
-func generateJSONResponce(trivySummary *TrivyScanSummary) []byte {
-	var responseJSON []byte
-	if len(trivySummary.Images) > 0 {
-		// If there are any vulnerabilities
-		reasons := []string{}
-		for image := range trivySummary.Images {
-			reasons = append(reasons, fmt.Sprintf("image %s has vulnerabilities", image))
-		}
-		reason := strings.Join(reasons, ", ")
-
-		response := map[string]interface{}{
-			"apiVersion": "imagepolicy.k8s.io/v1alpha1",
-			"kind":       "ImageReview",
-			"status": map[string]interface{}{
-				"allowed": false,
-				"reason":  reason,
-			},
-		}
-
-		// Convert to JSON and print
-		responseJSON, _ = json.MarshalIndent(response, "", "  ")
-	} else {
-		// If no vulnerabilities are found
-		response := map[string]interface{}{
-			"apiVersion": "imagepolicy.k8s.io/v1alpha1",
-			"kind":       "ImageReview",
-			"status": map[string]interface{}{
-				"allowed": true,
-			},
-		}
-
-		// Convert to JSON and print
-		responseJSON, _ = json.MarshalIndent(response, "", "  ")
-	}
-	return responseJSON
-}
-
-/*
-When you use os.ReadFile in Go, it reads the entire content of a file and returns it as a []byte.
-A []byte in Go is a slice, and slices in Go are a reference type.
-This means that when you return a []byte from a function, you're actually returning a slice header, not a deep copy of the entire underlying array.
-*/
-func readJSONFile(fileName string) (*ImageReview, error) {
-	jsonData, err := os.ReadFile(fileName)
-	if err != nil {
-		return nil, fmt.Errorf("error reading file %s: %v", fileName, err)
-	}
-	fmt.Printf("Successfully Opened %s\n", fileName)
-
-	var outputJSON ImageReview
-
-	err = json.Unmarshal(jsonData, &outputJSON)
-	if err != nil {
-		return nil, fmt.Errorf("error unmarshalling JSON data: %v", err)
-	}
-
-	return &outputJSON, nil
-}
-
-func runTrivyScan(image string) (ScanResult, error) {
+func runTrivyScan(image string) (models.ScanResult, error) {
 	cmd := exec.Command("trivy", "image", "--format", "json", image)
 
 	// Run the command and print its output in real-time
 	output, err := cmd.Output()
 	if err != nil {
-		return ScanResult{}, fmt.Errorf("error running trivy for image %s: %v", image, err)
+		return models.ScanResult{}, fmt.Errorf("error running trivy for image %s: %v", image, err)
 	}
 
-	var trivyResult TrivyOutput
+	var trivyResult models.TrivyOutput
 	err = json.Unmarshal(output, &trivyResult)
 	if err != nil {
-		return ScanResult{}, fmt.Errorf("error unmarshalling trivy output for image %s: %v", image, err)
+		return models.ScanResult{}, fmt.Errorf("error unmarshalling trivy output for image %s: %v", image, err)
 	}
 
 	// Initialize a ScanResult to collect critical vulnerabilities
-	scanResults := ScanResult{
+	scanResults := models.ScanResult{
 		Target:          trivyResult.ArtifactName,
-		Vulnerabilities: []Vulnerability{},
+		Vulnerabilities: []models.Vulnerability{},
 	}
 
 	for _, result := range trivyResult.Results {
 		for _, vuln := range result.Vulnerabilities {
 			if vuln.Severity == "CRITICAL" {
 				scanResults.Vulnerabilities = append(scanResults.Vulnerabilities, vuln)
+				// Print detailed vulnerability information
+				fmt.Printf("[%s] Critical Vulnerability Found: \n", time.Now().Format(time.RFC3339))
+				fmt.Printf("  - Vulnerability ID: %s\n", vuln.VulnerabilityID)
+				fmt.Printf("  - Package Name: %s\n", vuln.PkgName)
+				fmt.Printf("  - Installed Version: %s\n", vuln.InstalledVersion)
+				fmt.Printf("  - Severity: %s\n", vuln.Severity)
+				fmt.Printf("  - Description: %s\n", vuln.Description)
 			}
 		}
 	}
 
 	// Only return results if there are critical vulnerabilities
 	if len(scanResults.Vulnerabilities) > 0 {
+		fmt.Printf("[%s] Critical vulnerabilities found for image: %s\n", time.Now().Format(time.RFC3339), image)
 		return scanResults, nil
 	}
 
-	fmt.Println("No critical vulnerabilities found for image:", image)
-	return ScanResult{}, nil
+	fmt.Printf("[%s] No critical vulnerabilities found for image: %s\n", time.Now().Format(time.RFC3339), image)
+	return models.ScanResult{}, nil
 }
