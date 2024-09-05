@@ -2,10 +2,10 @@ FROM golang:1.23.0-alpine3.20 AS builder
 
 WORKDIR /app
 
-COPY go.mod ./
+COPY scaner/go.mod ./
 RUN go mod download
 
-COPY . .
+COPY scaner/ .
 
 RUN go build -o image-policy-webhook main.go
 
