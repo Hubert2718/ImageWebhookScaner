@@ -18,6 +18,7 @@ func main() {
 	http.HandleFunc("/", handleScanRequest)
 	fmt.Println("Server started at :8080")
 	log.Fatal(http.ListenAndServeTLS(":8080", "/etc/webhook/certs/cert.pem", "/etc/webhook/certs/key.pem", nil))
+	// log.Fatal(http.ListenAndServe(":8080", nil))
 }
 
 func handleScanRequest(w http.ResponseWriter, r *http.Request) {
@@ -45,6 +46,18 @@ func handleScanRequest(w http.ResponseWriter, r *http.Request) {
 	// Initialize the scan summary for images with critical vulnerabilities
 	trivySummary := &models.TrivyScanSummary{
 		Images: make(map[string][]models.ScanResult),
+	}
+
+	for key, value := range outputJSON.Spec.Annotations {
+		if value == "break-glass" {
+			fmt.Printf("[%s] break-glass annotation found, skipping scan. Annotation key: %s\n", time.Now().Format(time.RFC3339), key)
+			responseJSON := jsonutils.GenerateJSONResponce(trivySummary)
+
+			// Write JSON response
+			w.Header().Set("Content-Type", "application/json")
+			w.Write(responseJSON)
+			return
+		}
 	}
 
 	// Iterate over the images in the JSON and run trivy against each
